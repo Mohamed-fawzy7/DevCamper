@@ -5,15 +5,18 @@ require('colors');
 dotenv.config({path: './config/config.env'});
 
 const Bootcamp = require('./models/Bootcamp');
+const Course = require('./models/Course');
 const connectDB = require('./config/db');
 
 connectDB();
 
 const bootcamps = JSON.parse(fs.readFileSync(`${__dirname}/_data/bootcamps.json`));
+const courses = JSON.parse(fs.readFileSync(`${__dirname}/_data/courses.json`));
 
 const importData = async ()=>{
     try {
         await Bootcamp.create(bootcamps);
+        await Course.create(courses);
         console.log('imported bootcamps...')
         process.exit();
     }catch(err){
@@ -25,6 +28,7 @@ const importData = async ()=>{
 const deleteData = async ()=>{
     try {
         await Bootcamp.deleteMany();
+        await Course.deleteMany();
         console.log('deleted bootcamps...')
         process.exit();
     }catch(err){
