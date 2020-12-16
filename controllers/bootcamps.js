@@ -2,73 +2,16 @@ const Bootcamp = require('../models/Bootcamp');
 const ErrorResponse = require('../utils/errorResponse');
 const asyncHandler = require('../middlewares/async');
 const geocoder = require('../utils/geocoder');
+const path = require('path');
 
 
 // @desc get all bootcamps
 // @route GET /api/v1/bootcamps
 // @access public
 exports.getBootcamps = asyncHandler(async (req, res, next) => {
-    let query;
-
-    // copying reqQuery
-    let reqQuery = { ...req.query };
-    
-    // defining removed fields from seach query
-    const removeFields = ['select', 'sort', 'page', 'limit'];
-    removeFields.forEach(field => delete reqQuery[field]);
-
-    // adding $ to mongoose operators
-    let queryString = JSON.stringify(reqQuery);
-    queryString = queryString.replace(/\b(gt|gte|lt|lte|in)\b/, match => `$${match}`);
-    
-    // querying with options
-    query = Bootcamp.find(JSON.parse(queryString)).populate('courses');
-    
-    // selecting certain fields if select field is available
-    if (req.query.select) {
-        const selectedFields = req.query.select.split(',').join(' ');
-        query.select(selectedFields);
-    }
-    
-    // sorting
-    if(req.query.sort){
-        const sortFields = req.query.sort.split(',').join(' ');
-        query.sort(sortFields);
-    } else {
-        query.sort('-createdAt');
-    }
-
-    // pagination
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 25;
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const documentsCount = await Bootcamp.countDocuments();
-    query.skip(startIndex).limit(limit);
-    const pagination = {};
-    if(startIndex > 0){
-        pagination.prev = {
-            page: page - 1,
-            limit
-        }
-    }
-    if(endIndex < documentsCount){
-        pagination.next = {
-            page: page + 1,
-            limit
-        }
-    }
-    
-    // fetching query
-    const bootcamps = await query;
 
     // sending results
-    res.status(200).json({
-        success: true,
-        count: bootcamps.length,
-        data: bootcamps,
-        pagination
-    })
+    res.status(200).json(res.advancedResults);
 })
 
 // @desc get single bootcamp
@@ -88,6 +31,15 @@ exports.getBootcamp = asyncHandler(async (req, res, next) => {
 // @route post /api/v1/bootcamps
 // @access private
 exports.addBootcamp = asyncHandler(async (req, res, next) => {
+    req.body.user = req.user.id;
+    
+    // check if publisher already published a bootcamp before
+    const publishedBootcamp = await Bootcamp.findOne({user: req.user.id});
+
+    // make sure that the user is the owner or admin
+    if(publishedBootcamp && req.user.role !=='admin'){
+        return next(new ErrorResponse(`The user with id ${req.user.id} has already published a bootcamp`), 400);
+    }
     const newBootcamp = await Bootcamp.create(req.body);
     res.status(201).json({ success: true, data: newBootcamp });
 })
@@ -96,13 +48,24 @@ exports.addBootcamp = asyncHandler(async (req, res, next) => {
 // @route put /api/v1/bootcamps/:id
 // @access private
 exports.updateBootcamp = asyncHandler(async (req, res) => {
-    const updatedBootcamp = await Bootcamp.findByIdAndUpdate(req.params.id, req.body, {
+    let updatedBootcamp = await Bootcamp.findById(req.params.id);
+
+    //check if bootcamp exist
+    if (!updatedBootcamp) {
+        return next(new ErrorResponse(`Bootcamp not found`, 404));
+    }
+
+    // make sure that the user is the owner or admin
+    if(updatedBootcamp.user.toString() !== req.user.id && req.user.role !== 'admin'){
+        return next(new ErrorResponse(`Not Authorized`, 401));
+    }
+
+    //update bootcamp
+    updatedBootcamp = await Bootcamp.findByIdAndUpdate(req.params.id, req.body, {
         new: true,
         runValidators: true
     });
-    if (!updatedBootcamp) {
-        return res.status(400).json({ success: false });
-    }
+
     res.status(201).json({ success: true, data: updatedBootcamp });
 })
 
@@ -111,9 +74,17 @@ exports.updateBootcamp = asyncHandler(async (req, res) => {
 // @access private
 exports.deleteBootcamp = asyncHandler(async (req, res) => {
     const deletedBootcamp = await Bootcamp.findById(req.params.id);
+
+    // check if bootcamp exist
     if (!deletedBootcamp) {
         return res.status(400).json({ success: false });
     }
+
+    // make sure that the user is the owner or admin
+    if(updatedBootcamp.user.toString() !== req.user.id && req.user.role !== 'admin'){
+        return next(new ErrorResponse(`Not Authorized`, 401));
+    }
+
     deletedBootcamp.remove();
     res.status(201).json({ success: true, data: deletedBootcamp });
 })
@@ -148,3 +119,59 @@ exports.getBootcampsInRadius = asyncHandler(async (req, res) => {
     })
 
 })
+
+// @desc      Upload photo for bootcamp
+// @route     PUT /api/v1/bootcamps/:id/photo
+// @access    Private
+exports.bootcampPhotoUpload = asyncHandler(async (req, res, next) => {
+    const bootcamp = await Bootcamp.findById(req.params.id);
+
+    if (!bootcamp) {
+        return next(
+            new ErrorResponse(`Bootcamp not found with id of ${req.params.id}`, 404)
+        );
+    }
+
+    // make sure that the user is the owner or admin
+    if(updatedBootcamp.user.toString() !== req.user.id && req.user.role !== 'admin'){
+        return next(new ErrorResponse(`Not Authorized`, 401));
+    }
+
+    if (!req.files) {
+        return next(new ErrorResponse(`Please upload a file`, 400));
+    }
+
+    const file = req.files.file;
+
+    // Make sure the image is a photo
+    if (!file.mimetype.startsWith('image')) {
+        return next(new ErrorResponse(`Please upload an image file`, 400));
+    }
+
+    // Check filesize
+    if (file.size > process.env.MAX_FILE_UPLOAD) {
+        return next(
+            new ErrorResponse(
+                `Please upload an image less than ${process.env.MAX_FILE_UPLOAD}`,
+                400
+            )
+        );
+    }
+
+    // Create custom filename
+    file.name = `photo_${bootcamp._id}${path.parse(file.name).ext}`;
+
+    file.mv(`${process.env.FILE_UPLOAD_PATH}/${file.name}`, async err => {
+        if (err) {
+            console.error(err);
+            return next(new ErrorResponse(`Problem with file upload`, 500));
+        }
+
+        await Bootcamp.findByIdAndUpdate(req.params.id, { photo: file.name });
+
+        res.status(200).json({
+            success: true,
+            data: file.name
+        });
+    });
+});

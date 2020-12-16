@@ -1,5 +1,6 @@
 const ErrorResponse = require('../utils/errorResponse');
 module.exports = (err, req, res, next) => {
+    console.log(err);
     let error = { ...err };
     error.message = err.message;
     
