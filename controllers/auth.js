@@ -189,7 +189,6 @@ const sendTokenResponse = (user, statusCode, res) => {
 
     // cookie expiration date in days
     const expirationDate = new Date(Date.now() + process.env.JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000);
-    console.log(expirationDate);
 
     const options = {
         expires: expirationDate,
